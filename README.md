@@ -5,10 +5,14 @@
 Mount a Mac disk (APFS or HFS+) on Windows as a read-only drive.
 Explorer, copy and robocopy work as on any drive.
 
-**Status: in development, not usable yet.** APFS and HFS+ reading is being built and tested.
-PLAN.md has the plan.
+Tested on real hardware: a Mac OS X system disk (HFS+, 10,765 entries listed, 2 GB copied)
+and a USB stick formatted APFS by iPadOS (all 1,363 files checked).
+A Mac system disk with APFS is not tested yet.
 
-**Download:** no release yet.
+**Download:** [latest release](https://github.com/poeggi/apfsmount/releases/latest)
+(setup, `SHA256SUMS`, licenses).
+The command-line tool alone:
+[apfsmount.exe](https://github.com/poeggi/apfsmount/releases/latest/download/apfsmount.exe).
 
 ## Requirements
 
@@ -58,6 +62,7 @@ Each has its own tray, start task and drive letters.
 - Sectors of 512 or 4096 bytes.
 - GPT partitions, Apple Partition Maps, and a file system without any partition table.
 - APFS: each volume of a container is a file system of its own.
+  System volumes (Preboot, Recovery, VM, Update) are listed, and mounted only on request.
 - HFS+ and HFSX, also inside an HFS wrapper.
 
 ## Command line
@@ -94,6 +99,8 @@ net use M: /delete
 - Encrypted volumes (FileVault) are found and refused.
 - Not read: snapshots, Fusion drives, plain HFS (before HFS+).
 - A bad sector fails only the files that use it.
+- A deliberately crafted disk can still hang or end the tray inside the reader libraries.
+  Fixes are on the way upstream.
 - Symlinks are Windows symlinks. Use `robocopy /XJ` or `/SL` to avoid loops.
 
 ## Build
@@ -116,7 +123,8 @@ pinned to a release tag: disks, WinFsp, the command line and the tray.
 ## Credits
 
 - [APFS Explorer](https://github.com/enesilhaydin/apfs-explorer) by enesilhaydin and contributors:
-  its reader `apfs-core` reads APFS (GPL-3.0).
+  its reader `apfs-core` reads APFS (GPL-3.0-only).
+- [hfsplus and cmpfs](https://github.com/Dil4rd/dpp) by Dil4rd read HFS+ and its compressed files (MIT).
 - WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos.
   https://github.com/winfsp/winfsp
 - [winfsp-rs](https://github.com/SnowflakePowered/winfsp-rs) by SnowflakePowered and contributors (GPL-3.0).

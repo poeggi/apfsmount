@@ -1,0 +1,271 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["**.md", "LICENSE"]
+  pull_request:
+    paths-ignore: ["**.md", "LICENSE"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  INNO_URL: https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe
+  INNO_SHA256: 8A5A6711C3766A6E5FB74F280BA0E3551E719CE94538D901FDBD1F8F9920B3F0
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF -like 'refs/tags/v*' -and $env:GITHUB_REF_NAME -ne "v$v") {
+            throw "tag $env:GITHUB_REF_NAME does not match the Cargo version $v"
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      # Release builds start from a clean target dir.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          workspaces: ". -> temp"
+
+      - name: Format
+        run: cargo fmt --check
+
+      # The setup scripts are ufsmount's, from the tag win-mountkit is pinned to.
+      - name: Installer scripts match the win-mountkit tag
+        shell: pwsh
+        run: |
+          $tag = (Select-String -Path Cargo.toml -Pattern '^win-mountkit = .*tag = "([^"]+)"').Matches[0].Groups[1].Value
+          if (-not $tag) { throw 'win-mountkit is not pinned to a tag' }
+          git -c advice.detachedHead=false clone --quiet --depth 1 --branch $tag https://github.com/poeggi/ufsmount "$env:RUNNER_TEMP\ufsmount"
+          if ($LASTEXITCODE -ne 0) { throw "cannot clone ufsmount $tag" }
+          git diff --no-index --exit-code installer "$env:RUNNER_TEMP\ufsmount\installer"
+          if ($LASTEXITCODE -ne 0) { throw "installer/ differs from ufsmount $tag" }
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked --no-deps -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Release build
+        run: cargo build --release --locked
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          Invoke-WebRequest $env:INNO_URL -OutFile inno.exe
+          $hash = (Get-FileHash inno.exe -Algorithm SHA256).Hash
+          if ($hash -ne $env:INNO_SHA256) { throw "Inno Setup hash mismatch: $hash" }
+          $sig = Get-AuthenticodeSignature inno.exe
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Pyrsys B\.V\.') {
+            throw "Inno Setup signature: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
+          $p = Start-Process .\inno.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CURRENTUSER', "/DIR=$env:RUNNER_TEMP\inno" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Inno Setup install failed: $($p.ExitCode)" }
+
+      - name: Build the installer
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          & "$env:RUNNER_TEMP\inno\ISCC.exe" /Q "/DAppVersion=$env:APP_VERSION" products\apfsmount\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
+
+      - name: Build an older setup for the downgrade test
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\inno\ISCC.exe" /Q /DAppVersion=0.0.0 "/O$env:RUNNER_TEMP\old-setup" products\apfsmount\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: downgrade-test
+          path: ${{ runner.temp }}/old-setup/apfsmount-0.0.0-setup.exe
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: apfsmount
+          path: |
+            temp/release/apfsmount.exe
+            temp/release/apfsmount-tray.exe
+            temp/installer/apfsmount-*-setup.exe
+            LICENSE
+            products/apfsmount/THIRD-PARTY-NOTICES.txt
+            licenses/*.txt
+
+  smoke:
+    # A fresh runner without WinFsp: the setup has to download it.
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: apfsmount
+          path: dist
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: downgrade-test
+          path: old
+
+      - name: Install, use and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $envKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+          function PathValue { $k = Get-Item $envKey; "$($k.GetValueKind('Path'))|$($k.GetValue('Path', $null, 'DoNotExpandEnvironmentNames'))" }
+          $pathBefore = PathValue
+          $app = 'C:\Program Files\apfsmount'
+          $uninstKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{C03C0B73-1D41-4456-8DB1-D8975EF96060}_is1'
+          $link = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\apfsmount.lnk"
+          if (Test-Path 'HKLM:\SOFTWARE\WOW6432Node\WinFsp') { throw 'WinFsp is preinstalled; the download path is not tested' }
+
+          $setup = (Get-ChildItem dist -Recurse -Filter 'apfsmount-*-setup.exe').FullName
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$env:RUNNER_TEMP\setup.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "setup failed: $($p.ExitCode)" }
+
+          if (-not (Test-Path 'HKLM:\SOFTWARE\WOW6432Node\WinFsp')) { throw 'WinFsp was not installed' }
+          foreach ($f in 'apfsmount.exe', 'apfsmount-tray.exe', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'GPL-3.0.txt', 'Apache-2.0.txt') {
+            if (-not (Test-Path "$app\$f")) { throw "missing $f" }
+          }
+          if (-not (Test-Path $link)) { throw 'missing Start menu link' }
+          if (-not (Test-Path $uninstKey)) { throw 'missing uninstall entry' }
+          $uninst = Get-ItemProperty $uninstKey
+          if ((PathValue) -notlike "*$app*") { throw 'PATH was not extended' }
+
+          [xml]$task = schtasks.exe /Query /TN apfsmount-tray /XML
+          if ($LASTEXITCODE -ne 0) { throw 'missing task' }
+          $s = $task.Task.Settings
+          if ($s.ExecutionTimeLimit -ne 'PT0S' -or $s.Priority -ne '4' -or $s.DisallowStartIfOnBatteries -ne 'false' -or $s.MultipleInstancesPolicy -ne 'IgnoreNew') { throw 'task settings' }
+          if ($task.Task.Actions.Exec.Command -ne "$app\apfsmount-tray.exe" -or $task.Task.Actions.Exec.Arguments -ne '--from-task') { throw 'task action' }
+          if ($task.Task.Principals.Principal.RunLevel -ne 'HighestAvailable') { throw 'task run level' }
+
+          # Older over newer: refused when silent, done with /ALLOWDOWNGRADE.
+          function Installed { (Get-ItemProperty $uninstKey).DisplayVersion }
+          $current = Installed
+          $old = (Get-ChildItem old -Recurse -Filter 'apfsmount-0.0.0-setup.exe').FullName
+          $p = Start-Process $old -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$env:RUNNER_TEMP\downgrade1.log" -Wait -PassThru
+          if ($p.ExitCode -eq 0 -or (Installed) -ne $current) { throw "downgrade not refused: exit $($p.ExitCode), version $(Installed)" }
+          $p = Start-Process $old -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/ALLOWDOWNGRADE', "/LOG=$env:RUNNER_TEMP\downgrade2.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or (Installed) -ne '0.0.0') { throw "downgrade failed: exit $($p.ExitCode), version $(Installed)" }
+          # The tray's "Start at sign-in" survives an upgrade.
+          Set-Content -Path "$env:ProgramData\apfsmount\start-at-sign-in" -Value '1' -NoNewline
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$env:RUNNER_TEMP\upgrade.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or (Installed) -ne $current) { throw "upgrade failed: exit $($p.ExitCode), version $(Installed)" }
+          [xml]$task = schtasks.exe /Query /TN apfsmount-tray /XML
+          if ($null -eq $task.Task.Triggers.LogonTrigger) { throw 'start at sign-in lost on upgrade' }
+          $n = @(((PathValue) -split '\|', 2)[1] -split ';' | Where-Object { $_ -eq $app }).Count
+          if ($n -ne 1) { throw "PATH has $n apfsmount entries" }
+
+          # No test disk here: the tray starts and scans, nothing is mounted.
+          & "$app\apfsmount.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "apfsmount --version failed: $LASTEXITCODE" }
+          Start-Process "$app\apfsmount-tray.exe"
+          $log = "$env:ProgramData\apfsmount\tray\tray.log"
+          $deadline = (Get-Date).AddSeconds(60)
+          while (-not (Test-Path $log) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          if (-not (Get-Process apfsmount-tray -ErrorAction SilentlyContinue)) { throw 'the tray is not running (tray.log is printed below)' }
+          $p = Start-Process "$app\apfsmount-tray.exe" -ArgumentList '--quit' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--quit failed: $($p.ExitCode)" }
+          Start-Sleep -Seconds 2
+          if (Get-Process apfsmount-tray -ErrorAction SilentlyContinue) { throw 'the tray still runs after --quit' }
+
+          $u = ($uninst.UninstallString -replace '"', '')
+          $p = Start-Process $u -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$env:RUNNER_TEMP\uninst.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall failed: $($p.ExitCode)" }
+          Start-Sleep -Seconds 3
+          foreach ($left in $app, $link, "$env:ProgramData\apfsmount") {
+            if (Test-Path $left) { throw "left behind: $left" }
+          }
+          schtasks.exe /Query /TN apfsmount-tray 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'task left behind' }
+          if (Test-Path $uninstKey) { throw 'uninstall entry left behind' }
+          # WinFsp stays installed and may add its own entry; ignore that one.
+          function Parts($v) { ($v -split '\|', 2)[1] -split ';' | Where-Object { $_ -notlike '*\WinFsp\*' } }
+          $after = PathValue
+          $kb = ($pathBefore -split '\|', 2)[0]
+          $ka = ($after -split '\|', 2)[0]
+          $pb = @(Parts $pathBefore)
+          $pa = @(Parts $after)
+          Write-Host "PATH type before=$kb after=$ka; entries before=$($pb.Count) after=$($pa.Count)"
+          $diff = @(Compare-Object $pb $pa)
+          foreach ($d in $diff) { Write-Host "  $($d.SideIndicator) [$($d.InputObject)]" }
+          if ($diff.Count -gt 0 -or $ka -ne $kb) { throw 'PATH changed' }
+          'smoke test passed'
+          # The last native call (the schtasks query above) failed on purpose.
+          exit 0
+
+      - name: Logs
+        if: failure()
+        shell: pwsh
+        run: |
+          $logs = "$env:RUNNER_TEMP\setup.log", "$env:RUNNER_TEMP\setup.log.winfsp.txt", "$env:RUNNER_TEMP\downgrade1.log", "$env:RUNNER_TEMP\downgrade2.log", "$env:RUNNER_TEMP\upgrade.log", "$env:RUNNER_TEMP\uninst.log", "$env:ProgramData\apfsmount\tray\tray.log"
+          foreach ($l in $logs) {
+            if (Test-Path $l) {
+              Write-Host "===== $l"
+              Get-Content $l -Tail 80 | Write-Host
+              Copy-Item $l "$env:RUNNER_TEMP\logs-$(Split-Path $l -Leaf)"
+            }
+          }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: smoke-logs
+          path: ${{ runner.temp }}/logs-*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: apfsmount
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir out
+          find dist -type f \( -name apfsmount.exe -o -name 'apfsmount-*-setup.exe' \) -exec cp {} out/ \;
+          cp dist/LICENSE out/LICENSE.txt
+          cp dist/products/apfsmount/THIRD-PARTY-NOTICES.txt dist/licenses/*.txt out/
+          cd out
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          setup="apfsmount-${GITHUB_REF_NAME#v}-setup.exe"
+          test -f "$setup"
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          # Above the generated notes; the blank line ends the list.
+          printf -v notes '## Download\n\n- **[%s](%s/%s)**: the setup, with the tray app\n- [apfsmount.exe](%s/apfsmount.exe): the command line tool only\n\n' \
+            "$setup" "$url" "$setup" "$url"
+          gh release create "$GITHUB_REF_NAME" * \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --notes "$notes"
