@@ -88,9 +88,10 @@ apfsmount reads file data through its own extent map with the overflow extents.
 ## Decisions (settled 2026-11-16)
 - First drive letter: M:. ufsmount starts at U:.
 - System volumes (Preboot, Recovery, VM, Update): listed, never mounted automatically.
-- Logo: variant A, picked by the user. A stylized red apple behind the M: drive, in
-  ufsmount's layout (its daemon behind the U: drive). A green leaf, no stem, no glare.
+- Logo: variant A, picked by the user. A stylized green apple behind the M: drive, in
+  ufsmount's layout (its daemon behind the U: drive). A dark green leaf, no stem, no glare.
   A bite on the left, the mirror side of Apple's logo (the user's choice).
+  Green, not red: it sets the icon apart from ufsmount's red daemon in the taskbar.
   Sources: `products/apfsmount/logos/logo.svg` and `logo-small.svg` (32 px).
   The icon and setup images are rendered from them, as in ufsmount.
 - PLAN.md stays in the repo as the plan document.

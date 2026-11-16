@@ -18,7 +18,8 @@
 
 ## Icon and setup images
 - Sources: `products/apfsmount/logos/logo.svg` and `logo-small.svg` (the 32-unit drawing for small sizes).
-  A red apple with a green leaf and a bite on the left, behind a white drive with black "M:".
+  A green apple with a dark green leaf and a bite on the left, behind a white drive with black "M:".
+  Green sets it apart from ufsmount's red daemon at taskbar sizes.
 - `logos/apfsmount.ico` (exe, tray and setup icon): 16-40 px from `logo-small.svg` on its 32-unit grid;
   48 and 64 px from `logo-small.svg` with viewBox `-1.25 0.15 30.5 30.5`; 256 px from `logo.svg`.
 - `logo.svg`'s viewBox ends at the drawing, so icons fill their canvas like other apps' icons.
