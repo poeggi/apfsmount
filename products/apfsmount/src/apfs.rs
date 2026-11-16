@@ -46,9 +46,6 @@ const DT_DIR: u16 = 4;
 const DT_REG: u16 = 8;
 const DT_LNK: u16 = 10;
 
-/// The most one request reads: a crafted container that loops fails here.
-const READ_BUDGET: u64 = 512 << 20;
-
 /// One place on the disk, as apfs-core reads it, with a budget per request.
 struct Part {
     dev: Arc<Device>,
@@ -63,12 +60,12 @@ impl Part {
             dev,
             start: cand.start,
             len: cand.len,
-            left: READ_BUDGET,
+            left: mac::READ_BUDGET,
         }
     }
 
     fn fresh(&mut self) {
-        self.left = READ_BUDGET;
+        self.left = mac::READ_BUDGET;
     }
 }
 
@@ -369,6 +366,7 @@ impl Fs for ApfsFs {
 
     fn read(&mut self, id: NodeId, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         self.part.fresh();
+        self.part.left = self.part.left.saturating_add(buf.len() as u64);
         let offset = usize::try_from(offset).map_err(|_| io::Error::from_raw_os_error(22))?;
         let data = self
             .catalog

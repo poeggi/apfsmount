@@ -11,6 +11,8 @@ Raw disk reads and global drive letters need admin rights. The tray and the laun
 - The backend reads untrusted disks inside the elevated tray: every size, offset and count read from a disk
   is checked before use, and a crafted disk never panics, loops or allocates without bound.
 - No C code in the reader: it runs elevated.
-- Each request (probe, open, stat, list, read, readlink) reads at most `READ_BUDGET` (512 MiB) in both
-  backends, so a reader crate that loops over the disk fails the request. Not covered: apfs-core's own node
-  cache (a fan-out over cached nodes) and its allocations sized by on-disk values; those fixes go upstream.
+- Each request (probe, open, stat, list, readlink) reads at most `READ_BUDGET` (512 MiB, `mac.rs`) in both
+  backends, a read that plus its own size, each HFS+ hard link lookup at least 1 MiB. A reader crate that
+  loops over the disk fails the request. The budget bounds reads, not memory: a looping HFS+ leaf chain can
+  hold about 1.5 GiB of records first. Not covered: apfs-core's own node cache (a fan-out over cached nodes)
+  and its allocations sized by on-disk values; those fixes go upstream.

@@ -19,6 +19,9 @@ const HFS_HEADER: usize = 1024;
 const EMBED_SIG: usize = HFS_HEADER + 0x7c;
 /// The bytes `kind` looks at.
 const HEAD: usize = 1536;
+/// The most one request reads from the disk: a reader crate that loops over
+/// a crafted disk fails the request here.
+pub(crate) const READ_BUDGET: u64 = 512 << 20;
 
 /// What a place holds, by the first `HEAD` bytes.
 fn kind(head: &[u8]) -> Option<&'static str> {

@@ -189,13 +189,14 @@ jobs:
 
           # A mount through WinFsp: the build's HFS+ image on X:.
           $img = (Get-ChildItem dist -Recurse -Filter 'hfs-test.img').FullName
-          $m = Start-Process "$app\apfsmount.exe" -ArgumentList 'mount', $img, 'X:' -PassThru -WindowStyle Hidden
+          $m = Start-Process "$app\apfsmount.exe" -ArgumentList 'mount', $img, 'X:' -PassThru -WindowStyle Hidden -RedirectStandardError "$env:RUNNER_TEMP\mount.log"
           $deadline = (Get-Date).AddSeconds(30)
           while (-not (Test-Path 'X:\hello.txt') -and -not $m.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
           if ((Get-Content 'X:\hello.txt' -Raw) -ne "Hello, HFS+!`n") { throw 'hello.txt reads wrong' }
-          if ((Get-Item 'X:\big.bin').Length -ne 300000) { throw 'big.bin has the wrong size' }
-          $null = Get-FileHash 'X:\big.bin'
+          # big.bin holds the bytes i * 7 % 251 (examples/mkhfs.rs).
+          if ((Get-FileHash 'X:\big.bin').Hash -ne 'B1CF7538CF80D01EFE3E0B8E45DC930048A138C7B6F8C4AFF08F478E4695E631') { throw 'big.bin reads wrong' }
           Stop-Process -Id $m.Id -Force
+          $m.WaitForExit()
 
           # No test disk here: the tray starts and scans, nothing is mounted.
           Start-Process "$app\apfsmount-tray.exe"
@@ -237,7 +238,7 @@ jobs:
         if: failure()
         shell: pwsh
         run: |
-          $logs = "$env:RUNNER_TEMP\setup.log", "$env:RUNNER_TEMP\setup.log.winfsp.txt", "$env:RUNNER_TEMP\downgrade1.log", "$env:RUNNER_TEMP\downgrade2.log", "$env:RUNNER_TEMP\upgrade.log", "$env:RUNNER_TEMP\uninst.log", "$env:ProgramData\apfsmount\tray\tray.log"
+          $logs = "$env:RUNNER_TEMP\setup.log", "$env:RUNNER_TEMP\setup.log.winfsp.txt", "$env:RUNNER_TEMP\downgrade1.log", "$env:RUNNER_TEMP\downgrade2.log", "$env:RUNNER_TEMP\upgrade.log", "$env:RUNNER_TEMP\uninst.log", "$env:RUNNER_TEMP\mount.log", "$env:ProgramData\apfsmount\tray\tray.log"
           foreach ($l in $logs) {
             if (Test-Path $l) {
               Write-Host "===== $l"

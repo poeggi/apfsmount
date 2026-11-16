@@ -45,8 +45,8 @@ const MAX_EXTENTS: usize = 1 << 20;
 const MAX_BLOCK_SIZE: u32 = 1 << 24;
 /// The longest symlink target read (macOS allows 1024 bytes).
 const LINK_MAX: u64 = 4096;
-/// The most one request reads: a crafted catalog that loops fails here.
-const READ_BUDGET: u64 = 512 << 20;
+/// What one hard link lookup may read, whatever its listing has used.
+const LINK_BUDGET: u64 = 1 << 20;
 /// Seconds from 1904 (HFS+ times) to 1970.
 const EPOCH_1904: u64 = 2_082_844_800;
 
@@ -107,7 +107,7 @@ fn file_kind(mode: u16) -> Kind {
     }
 }
 
-/// A reader that fails once a request has read `left` bytes.
+/// A reader that fails a read of more than the `left` bytes still allowed.
 struct Budgeted<R> {
     r: R,
     left: u64,
@@ -115,7 +115,7 @@ struct Budgeted<R> {
 
 impl<R> Budgeted<R> {
     fn fresh(&mut self) {
-        self.left = READ_BUDGET;
+        self.left = mac::READ_BUDGET;
     }
 }
 
@@ -159,7 +159,7 @@ impl Volume {
         let len = len.unwrap_or(room).min(room);
         let mut r = Budgeted {
             r: PartitionReader::new(dev, cand.start + offset, len, 512),
-            left: READ_BUDGET,
+            left: mac::READ_BUDGET,
         };
         let vh = VolumeHeader::parse(&mut r).map_err(io_error)?;
         if vh.block_size < 512 || vh.block_size > MAX_BLOCK_SIZE || !vh.block_size.is_power_of_two()
@@ -523,6 +523,7 @@ impl HfsFs {
         if let Some(&t) = self.link_nodes.get(&n) {
             return Ok(t);
         }
+        self.vol.r.left = self.vol.r.left.max(LINK_BUDGET);
         let mut target = None;
         if let Some(dir) = self.private_files
             && let Some(CatalogRecord::File(t)) = self.vol.lookup(dir, &format!("iNode{n}"))?
@@ -714,6 +715,7 @@ impl Fs for HfsFs {
 
     fn read(&mut self, id: NodeId, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         self.vol.r.fresh();
+        self.vol.r.left = self.vol.r.left.saturating_add(buf.len() as u64);
         let file = self.file(id)?;
         self.read_data(&file, offset, buf)
     }
