@@ -45,6 +45,8 @@ const MAX_EXTENTS: usize = 1 << 20;
 const MAX_BLOCK_SIZE: u32 = 1 << 24;
 /// The longest symlink target read (macOS allows 1024 bytes).
 const LINK_MAX: u64 = 4096;
+/// The most one request reads: a crafted catalog that loops fails here.
+const READ_BUDGET: u64 = 512 << 20;
 /// Seconds from 1904 (HFS+ times) to 1970.
 const EPOCH_1904: u64 = 2_082_844_800;
 
@@ -105,9 +107,38 @@ fn file_kind(mode: u16) -> Kind {
     }
 }
 
+/// A reader that fails once a request has read `left` bytes.
+struct Budgeted<R> {
+    r: R,
+    left: u64,
+}
+
+impl<R> Budgeted<R> {
+    fn fresh(&mut self) {
+        self.left = READ_BUDGET;
+    }
+}
+
+impl<R: Read> Read for Budgeted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.len() as u64 > self.left {
+            return Err(damaged("a request reads too much"));
+        }
+        let n = self.r.read(buf)?;
+        self.left -= n as u64;
+        Ok(n)
+    }
+}
+
+impl<R: Seek> Seek for Budgeted<R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.r.seek(pos)
+    }
+}
+
 /// An open HFS+ volume.
 struct Volume {
-    r: PartitionReader,
+    r: Budgeted<PartitionReader>,
     vh: VolumeHeader,
     catalog: BTreeHeaderRecord,
     extents: BTreeHeaderRecord,
@@ -126,7 +157,10 @@ impl Volume {
             .checked_sub(offset)
             .ok_or_else(|| damaged("wrapper past the partition"))?;
         let len = len.unwrap_or(room).min(room);
-        let mut r = PartitionReader::new(dev, cand.start + offset, len, 512);
+        let mut r = Budgeted {
+            r: PartitionReader::new(dev, cand.start + offset, len, 512),
+            left: READ_BUDGET,
+        };
         let vh = VolumeHeader::parse(&mut r).map_err(io_error)?;
         if vh.block_size < 512 || vh.block_size > MAX_BLOCK_SIZE || !vh.block_size.is_power_of_two()
         {
@@ -326,6 +360,7 @@ impl Volume {
             return Err(damaged("fork too large to read whole"));
         }
         let extents = self.fork_extents(file_id, fork, fork_type)?;
+        self.r.left = self.r.left.saturating_add(fork.logical_size);
         let mut data = vec![0u8; fork.logical_size as usize];
         let n = self.read_fork(&extents, fork.logical_size, 0, &mut data)?;
         data.truncate(n);
@@ -590,6 +625,7 @@ impl Fs for HfsFs {
     }
 
     fn stat(&mut self, id: NodeId) -> io::Result<Stat> {
+        self.vol.r.fresh();
         let cnid = u32::try_from(id).map_err(|_| not_found())?;
         let bsz = u64::from(self.vol.vh.block_size);
         let (parent, record) = self.vol.record_with_parent(cnid)?;
@@ -634,6 +670,7 @@ impl Fs for HfsFs {
         dir: NodeId,
         f: &mut dyn FnMut(&[u8], NodeId, Kind) -> bool,
     ) -> io::Result<()> {
+        self.vol.r.fresh();
         let cnid = u32::try_from(dir).map_err(|_| not_found())?;
         // HFS+ keeps no `..` entry: the parent comes from the thread record.
         let parent = match cnid {
@@ -676,11 +713,13 @@ impl Fs for HfsFs {
     }
 
     fn read(&mut self, id: NodeId, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        self.vol.r.fresh();
         let file = self.file(id)?;
         self.read_data(&file, offset, buf)
     }
 
     fn read_link(&mut self, id: NodeId) -> io::Result<Vec<u8>> {
+        self.vol.r.fresh();
         let file = self.file(id)?;
         let size = self.size(&file)?;
         if size > LINK_MAX {
@@ -696,6 +735,19 @@ impl Fs for HfsFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn budget_stops_reads() {
+        let mut b = Budgeted {
+            r: io::Cursor::new(vec![0u8; 100]),
+            left: 10,
+        };
+        let mut buf = [0u8; 8];
+        assert_eq!(b.read(&mut buf).unwrap(), 8);
+        assert!(b.read(&mut buf).is_err());
+        b.fresh();
+        assert_eq!(b.read(&mut buf).unwrap(), 8);
+    }
 
     #[test]
     fn times() {

@@ -9,7 +9,7 @@ A Cargo workspace with one product.
   finding APFS and HFS+ by magic), `src/apfs.rs` (APFS through apfs-core), `src/hfs.rs` (HFS+ through
   dpp's `hfsplus`; `cmpfs` decompresses), the two thin exes,
   `build.rs` (icon, manifest, link flags), `installer.iss` (defines), `logos/`, `THIRD-PARTY-NOTICES.txt`, `tests/`,
-  `examples/walk.rs` (walks and times a file system without WinFsp).
+  `examples/walk.rs` (walks and times a file system without WinFsp), `examples/mkhfs.rs` (CI's HFS+ image).
 - `apfs-core` is a git dependency on github.com/enesilhaydin/apfs-explorer, pinned to a release tag
   (GPL-3.0-only). Fixes go upstream as lean PRs from a fork.
 - `hfsplus` and `cmpfs` come from our fork github.com/poeggi/dpp, pinned to a commit: it adds
@@ -49,7 +49,8 @@ A Cargo workspace with one product.
 ## CI (`.github/workflows/ci.yml`)
 - build: fmt, the installer scripts against the tag, clippy, tests, release build, the setup,
   and a 0.0.0 setup for the downgrade test.
-- smoke: a fresh runner without WinFsp. Installs (downloads WinFsp), starts the tray, downgrades and upgrades,
+- smoke: a fresh runner without WinFsp. Installs (downloads WinFsp), mounts the build's HFS+ image
+  (`examples/mkhfs.rs`) on X: and reads it, starts the tray, downgrades and upgrades,
   uninstalls, and checks that nothing is left and PATH is unchanged.
 - release: tags `v*` only. The tag must equal the version in the root `Cargo.toml` (`[workspace.package]`).
   See the release skill.

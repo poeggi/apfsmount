@@ -99,8 +99,9 @@ net use M: /delete
 - Encrypted volumes (FileVault) are found and refused.
 - Not read: snapshots, Fusion drives, plain HFS (before HFS+).
 - A bad sector fails only the files that use it.
-- A deliberately crafted disk can still hang or end the tray inside the reader libraries.
-  Fixes are on the way upstream.
+- A damaged or crafted disk that makes a reader loop fails that request with an error.
+  A deliberately crafted APFS disk can still make the tray run out of memory.
+  The fix belongs in the APFS reader library.
 - Symlinks are Windows symlinks. Use `robocopy /XJ` or `/SL` to avoid loops.
 
 ## Build

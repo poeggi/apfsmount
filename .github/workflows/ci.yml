@@ -69,6 +69,9 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      - name: HFS+ image for the smoke test
+        run: cargo run --locked --example mkhfs -- temp/hfs-test.img
+
       - name: Release build
         run: cargo build --release --locked
 
@@ -111,6 +114,7 @@ jobs:
             temp/release/apfsmount.exe
             temp/release/apfsmount-tray.exe
             temp/installer/apfsmount-*-setup.exe
+            temp/hfs-test.img
             LICENSE
             products/apfsmount/THIRD-PARTY-NOTICES.txt
             licenses/*.txt
@@ -180,9 +184,20 @@ jobs:
           $n = @(((PathValue) -split '\|', 2)[1] -split ';' | Where-Object { $_ -eq $app }).Count
           if ($n -ne 1) { throw "PATH has $n apfsmount entries" }
 
-          # No test disk here: the tray starts and scans, nothing is mounted.
           & "$app\apfsmount.exe" --version
           if ($LASTEXITCODE -ne 0) { throw "apfsmount --version failed: $LASTEXITCODE" }
+
+          # A mount through WinFsp: the build's HFS+ image on X:.
+          $img = (Get-ChildItem dist -Recurse -Filter 'hfs-test.img').FullName
+          $m = Start-Process "$app\apfsmount.exe" -ArgumentList 'mount', $img, 'X:' -PassThru -WindowStyle Hidden
+          $deadline = (Get-Date).AddSeconds(30)
+          while (-not (Test-Path 'X:\hello.txt') -and -not $m.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+          if ((Get-Content 'X:\hello.txt' -Raw) -ne "Hello, HFS+!`n") { throw 'hello.txt reads wrong' }
+          if ((Get-Item 'X:\big.bin').Length -ne 300000) { throw 'big.bin has the wrong size' }
+          $null = Get-FileHash 'X:\big.bin'
+          Stop-Process -Id $m.Id -Force
+
+          # No test disk here: the tray starts and scans, nothing is mounted.
           Start-Process "$app\apfsmount-tray.exe"
           $log = "$env:ProgramData\apfsmount\tray\tray.log"
           $deadline = (Get-Date).AddSeconds(60)

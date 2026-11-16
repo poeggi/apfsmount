@@ -46,11 +46,30 @@ const DT_DIR: u16 = 4;
 const DT_REG: u16 = 8;
 const DT_LNK: u16 = 10;
 
-/// One place on the disk, as apfs-core reads it.
+/// The most one request reads: a crafted container that loops fails here.
+const READ_BUDGET: u64 = 512 << 20;
+
+/// One place on the disk, as apfs-core reads it, with a budget per request.
 struct Part {
     dev: Arc<Device>,
     start: u64,
     len: u64,
+    left: u64,
+}
+
+impl Part {
+    fn new(dev: Arc<Device>, cand: &Candidate) -> Part {
+        Part {
+            dev,
+            start: cand.start,
+            len: cand.len,
+            left: READ_BUDGET,
+        }
+    }
+
+    fn fresh(&mut self) {
+        self.left = READ_BUDGET;
+    }
 }
 
 impl BlockDevice for Part {
@@ -60,6 +79,12 @@ impl BlockDevice for Part {
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), BlockError> {
         let len = buf.len() as u64;
+        if len > self.left {
+            return Err(BlockError::Io(io::Error::other(
+                "APFS: a request reads too much",
+            )));
+        }
+        self.left -= len;
         let out = BlockError::OutOfRange {
             offset,
             len,
@@ -116,11 +141,7 @@ fn plausible(part: &mut Part) -> bool {
 
 /// The volumes of the container at `cand`.
 pub fn probe(dev: &Arc<Device>, cand: &Candidate) -> Vec<FsKind> {
-    let mut part = Part {
-        dev: dev.clone(),
-        start: cand.start,
-        len: cand.len,
-    };
+    let mut part = Part::new(dev.clone(), cand);
     if !plausible(&mut part) {
         log::warn!(
             "{} {}: APFS container header out of bounds",
@@ -188,11 +209,7 @@ pub fn probe(dev: &Arc<Device>, cand: &Candidate) -> Vec<FsKind> {
 
 /// Open the volume `found` names in the container at `cand`.
 pub fn open(dev: Arc<Device>, cand: &Candidate, found: &Found) -> anyhow::Result<Box<dyn Fs>> {
-    let mut part = Part {
-        dev,
-        start: cand.start,
-        len: cand.len,
-    };
+    let mut part = Part::new(dev, cand);
     if !plausible(&mut part) {
         anyhow::bail!("{}: APFS container header out of bounds", cand.id);
     }
@@ -283,6 +300,7 @@ impl Fs for ApfsFs {
     }
 
     fn stat(&mut self, id: NodeId) -> io::Result<Stat> {
+        self.part.fresh();
         let st = self.catalog.stat(&mut self.part, id).map_err(io_error)?;
         let kind = match st.mode & S_IFMT {
             S_IFDIR => Kind::Dir,
@@ -316,6 +334,7 @@ impl Fs for ApfsFs {
         dir: NodeId,
         f: &mut dyn FnMut(&[u8], NodeId, Kind) -> bool,
     ) -> io::Result<()> {
+        self.part.fresh();
         // APFS keeps no `..` entry: the parent comes from the directory's inode.
         let parent = match dir {
             ROOT_DIR => ROOT_DIR,
@@ -349,6 +368,7 @@ impl Fs for ApfsFs {
     }
 
     fn read(&mut self, id: NodeId, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        self.part.fresh();
         let offset = usize::try_from(offset).map_err(|_| io::Error::from_raw_os_error(22))?;
         let data = self
             .catalog
@@ -360,6 +380,7 @@ impl Fs for ApfsFs {
     }
 
     fn read_link(&mut self, id: NodeId) -> io::Result<Vec<u8>> {
+        self.part.fresh();
         // macOS stores a target inline. A stream would be read whole, at
         // whatever size the disk claims.
         let flags = self
