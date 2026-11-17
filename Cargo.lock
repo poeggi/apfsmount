@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "apfsmount"
-version = "0.1.2"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "apfs-core",
@@ -755,8 +755,8 @@ checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "win-mountkit"
-version = "0.5.4"
-source = "git+https://github.com/poeggi/ufsmount?tag=v0.5.4#e9f7373c9bc25b265e522b531aaf900332ca6a9d"
+version = "0.5.5"
+source = "git+https://github.com/poeggi/ufsmount?tag=v0.5.5#1e4c9acacd676e747ce27ec1eb11f86e4bfc38c1"
 dependencies = [
  "anyhow",
  "clap",
