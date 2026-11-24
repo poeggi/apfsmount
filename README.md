@@ -48,7 +48,7 @@ Each has its own tray, start task and drive letters.
 - Start: Start menu > apfsmount.
   The icon <img src="products/apfsmount/logos/logo-small.svg" width="20" alt="apfsmount icon"> appears in the notification area.
 - Windows 11 may hide it behind the ^ arrow.
-  To keep it visible: Settings > Personalization > Taskbar > Other system tray icons > apfsmount.
+  To keep it visible: Settings > Personalization > Taskbar > Other system tray icons > apfsmount tray.
 - The user who ran the setup gets no UAC prompt. Other accounts get one.
 - Every Mac file system is mounted: M: first, then L:, K: down to D:, then N: up to U:.
 - Plugging in a disk mounts it. Unplugging unmounts it.
