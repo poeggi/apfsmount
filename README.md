@@ -19,7 +19,7 @@ The command-line tool alone:
 
 - Windows 11 or Windows Server 2025, x64, an administrator account.
 - [WinFsp](https://github.com/winfsp/winfsp/releases) 2.2.26323 (2026-11-19) or later.
-  The setup installs it if it is missing or older.
+  NOTE: The setup installs it automatically if it is missing or older.
 
 ## Install
 
