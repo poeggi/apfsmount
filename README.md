@@ -2,7 +2,8 @@
 
 <img src="products/apfsmount/logos/logo.svg" width="96" alt="apfsmount logo">
 
-Mount a Mac disk (APFS or HFS+) on Windows as a read-only drive.
+A Windows app that mounts a Mac disk (APFS or HFS+) as a read-only drive.
+It runs in the notification area, and as a command-line tool.
 Explorer, copy and robocopy work as on any drive.
 
 Tested on real hardware: a Mac OS X system disk (HFS+, 10,765 entries listed, 2 GB copied)
@@ -16,7 +17,7 @@ The command-line tool alone:
 
 ## Requirements
 
-- Windows 10 or 11, x64, an administrator account.
+- Windows 11 or Windows Server 2025, x64, an administrator account.
 - [WinFsp](https://github.com/winfsp/winfsp/releases) 2.2.26323 (WinFsp 2026) or later.
   Older versions have known vulnerabilities (CVE-2026-3006 and others).
   The setup downloads and installs it if needed.
@@ -42,7 +43,12 @@ Each has its own tray, start task and drive letters.
 
 ## Start and stop
 
-- Start: Start menu > apfsmount. The icon appears in the notification area.
+<img src="docs/tray-menu.png" width="191" alt="The tray menu, no disk plugged in">
+
+- Start: Start menu > apfsmount.
+  The icon <img src="products/apfsmount/logos/logo-small.svg" width="20" alt="apfsmount icon"> appears in the notification area.
+- Windows 11 may hide it behind the ^ arrow.
+  To keep it visible: Settings > Personalization > Taskbar > Other system tray icons > apfsmount.
 - The user who ran the setup gets no UAC prompt. Other accounts get one.
 - Every Mac file system is mounted: M: first, then L:, K: down to D:, then N: up to U:.
 - Plugging in a disk mounts it. Unplugging unmounts it.

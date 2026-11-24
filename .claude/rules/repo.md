@@ -17,6 +17,7 @@ A Cargo workspace with one product.
   A tag `apfsmount-hfsplus-<short rev>` in the fork keeps the pinned commit reachable; a new pin gets one too.
   dpp PRs target its `dev` branch and follow its CLAUDE.md (pinned toolchain, -dev versions, checks).
 - `installer/` `common.iss` and `winfsp.iss`, copies from ufsmount at the pinned tag.
+- `docs/` images for the README (`tray-menu.png`: the tray menu, cut from a screenshot at 200%).
 - All build output and other temporary files go to `temp/` (git-ignored; set in `.cargo/config.toml`).
   The setup lands in `temp/installer`. Nothing built is committed: releases carry the exes and the setup.
 

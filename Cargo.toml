@@ -3,7 +3,7 @@ members = ["products/apfsmount"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 rust-version = "1.95"
 license = "AGPL-3.0-or-later"
@@ -11,7 +11,7 @@ repository = "https://github.com/poeggi/apfsmount"
 publish = false
 
 [workspace.dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 # The APFS reader of apfs-explorer (GPL-3.0-only), not on crates.io.
 apfs-core = { git = "https://github.com/enesilhaydin/apfs-explorer", tag = "v1.3.0" }
 # The HFS+ reader from our fork of dpp: catalog::list_directory_records (Dil4rd/dpp#22).
